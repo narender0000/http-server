@@ -1,16 +1,22 @@
-#[allow(unused_imports)]
+use anyhow::Result;
+use log::{debug, error};
+use std::io::Write;
 use std::net::TcpListener;
-fn main() {
-    let listener = TcpListener::bind("127.0.0.1:42221").unwrap();
+fn main() -> Result<()> {
+    env_logger::init();
+    let listener = TcpListener::bind("127.0.0.1:4221").unwrap();
 
     for stream in listener.incoming() {
         match stream {
-            Ok(_stream) => {
-                println!("accepted new connection");
+            Ok(mut stream) => {
+                debug!("accepted new connection");
+                const RESPONSE: &str = "HTTP/1.1 200 OK\r\n\r\n";
+                stream.write(RESPONSE.as_bytes())?;
             }
             Err(e) => {
-                println!("error: {}", e);
+                error!("error: {e}");
             }
         }
     }
+    Ok(())
 }

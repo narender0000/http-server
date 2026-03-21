@@ -3,8 +3,8 @@ use log::{debug, error, info};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 
-const SUCCESS_RESPONSE: &[u8] = "HTTP/1.1 200 OK\r\n\r\n".as_bytes();
-const ERROR_RESPONSE: &[u8] = "HTTP/1.1 400 NOT FOUND\r\n\r\n".as_bytes();
+const SUCCESS_RESPONSE: &str = "HTTP/1.1 200 OK\r\n\r\n";
+const ERROR_RESPONSE: &str = "HTTP/1.1 400 NOT FOUND\r\n\r\n";
 
 type Key = String;
 type Value = String;
@@ -36,12 +36,11 @@ fn handle_request(mut stream: TcpStream) -> Result<()> {
     //GET /index.html HTTP/1.1
     let path: Vec<&str> = request_line.split_whitespace().collect();
 
-    match path[..] {
+    let response = match path[..] {
         ["GET", path, "HTTP/1.1"] => {
             if path == "/" {
                 debug!("root path requested");
-                stream.write(SUCCESS_RESPONSE)?;
-                stream.flush()?;
+                SUCCESS_RESPONSE.to_string()
             } else if path == "/user-agent/" {
                 let mut user_agent = None;
                 for (key, value) in headers {
@@ -53,8 +52,7 @@ fn handle_request(mut stream: TcpStream) -> Result<()> {
                 match user_agent {
                     None => {
                         error!("User-Agent header not found in request . Request: {request_line}");
-                        stream.write(ERROR_RESPONSE)?;
-                        stream.flush()?;
+                        ERROR_RESPONSE.to_string()
                     }
                     Some(user_agent) => {
                         let response = format!(
@@ -62,8 +60,7 @@ fn handle_request(mut stream: TcpStream) -> Result<()> {
                             user_agent.len(),
                             user_agent
                         );
-                        stream.write(response.as_bytes())?;
-                        stream.flush()?;
+                        response
                     }
                 }
             } else if path.starts_with("/echo/") {
@@ -76,27 +73,27 @@ fn handle_request(mut stream: TcpStream) -> Result<()> {
                             path.len(),
                             path
                         );
-                        stream.write(response.as_bytes())?;
-                        stream.flush()?;
+                        response
                     }
 
                     _ => {
                         error!("Invalid echo path in request. Request: {request_line}");
+                        format!("HTTP/1.1 400 Bad request\r\n\r\n")
                     }
                 }
             } else {
                 debug!("Unkown path: {path}");
-                stream.write(ERROR_RESPONSE)?;
-                stream.flush()?;
+                format!("HTTP/1.1 400 Not Found\r\n\r\n")
             }
         }
         _ => {
             error!("No Path in request, Input: {request_line}");
-
-            stream.write(ERROR_RESPONSE)?;
-            stream.flush()?;
+            ERROR_RESPONSE.to_string()
         }
-    }
+    };
+
+    stream.write(response.as_bytes())?;
+    stream.flush()?;
     Ok(())
 }
 fn main() -> Result<()> {

@@ -1,89 +1,22 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use log::{debug, error, info};
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
 
-const SUCCESS_RESPONSE: &str = "HTTP/1.1 200 OK\r\n\r\n";
-const ERROR_RESPONSE: &str = "HTTP/1.1 400 NOT FOUND\r\n\r\n";
+mod request;
 
-type Key = String;
-type Value = String;
+use request::Request;
 
-#[derive(Debug)]
-struct Request {
-    method: String,
-    path: String,
-    http_version: String,
-    headers: Vec<(Key, Value)>,
-    body: Option<String>,
-}
-
-impl TryFrom<TcpStream> for Request {
-    type Error = anyhow::Error;
-    fn try_from(stream: TcpStream) -> Result<Self> {
-        let mut reader = BufReader::new(stream);
-        let mut request_line = String::new();
-        reader.read_line(&mut request_line)?;
-
-        //split the first line by space
-        //secont totken is the path
-        //Example:
-        //GET /index.html HTTP/1.1
-        let request_line: Vec<&str> = request_line.split_whitespace().collect();
-
-        //we expect three fields in the request line:
-        //1.Method(ex.g GET/POST)
-        //2. Path (e.g /index.html)
-        //3. HTTP version (e.g HTTP/1.1)
-
-        let (method, path, http_version) = match request_line[..] {
-            [method, path, http_version] => {
-                debug!("Correct format found: {}", request_line.join(" "));
-                (
-                    method.to_string(),
-                    path.to_string(),
-                    http_version.to_string(),
-                )
-            }
-            _ => {
-                bail!("invalid request line: {}", request_line.join(" "));
-            }
-        };
-
-        let mut headers = Vec::new();
-        loop {
-            let mut header_line = String::new();
-            let bytes_read = reader.read_line(&mut header_line)?;
-            if bytes_read == 0 || header_line == "\r\n" {
-                break;
-            }
-            if let Some((key, value)) = header_line.split_once(":") {
-                headers.push((key.to_string(), value.to_string()));
-            } else {
-                error!("Invalid header line: {header_line}");
-            }
-        }
-
-        //For simplicity, we are not handling the bpdy in this example
-        Ok(Request {
-            method,
-            path,
-            http_version,
-            headers,
-            body: None,
-        })
-    }
-}
-
-fn handle_request(mut stream: TcpStream) -> Result<()> {
+fn handle_request(file_directory: PathBuf, mut stream: TcpStream) -> Result<()> {
     debug!("accepted new connection");
 
     let request = Request::try_from(stream.try_clone()?)?;
 
     let response = if request.path == "/" {
         debug!("root path requested");
-        SUCCESS_RESPONSE.to_string()
+        "HTTP/1.1 200 OK\r\n\r\n".to_string()
     } else if request.path == "/user-agent/" {
         let mut user_agent = None;
         for (key, value) in &request.headers {
@@ -95,7 +28,7 @@ fn handle_request(mut stream: TcpStream) -> Result<()> {
         match user_agent {
             None => {
                 error!("User-Agent header not found in request. Request: {request:?}");
-                ERROR_RESPONSE.to_string()
+                "HTTP/1.1 400 NOT FOUND\r\n\r\n".to_string()
             }
             Some(user_agent) => {
                 let response = format!(
@@ -124,6 +57,31 @@ fn handle_request(mut stream: TcpStream) -> Result<()> {
                 format!("HTTP/1.1 400 Bad request\r\n\r\n")
             }
         }
+    } else if request.path.starts_with("/files/") {
+        let file_path = request.path.split_once("/files");
+        match file_path {
+            Some((_, path)) => {
+                debug!("file path requested: {path}");
+
+                match std::fs::read_to_string(file_directory.join(path)) {
+                    Ok(body) => {
+                        format!(
+                            "HTTP1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent=length: {}\r\n\r\n{}",
+                            body.len(),
+                            body
+                        )
+                    }
+                    Err(_e) => {
+                        format!("HTTP/1.1 400 Not Found\r\n\r\n")
+                    }
+                }
+            }
+
+            _ => {
+                error!("Invalid echo path in request. Request: {request:?}");
+                format!("HTTP/1.1 400 Bad request\r\n\r\n")
+            }
+        }
     } else {
         debug!("nnkown path requested: `{}`", request.path);
         format!("HTTP/1.1 400 Not Found\r\n\r\n")
@@ -136,13 +94,20 @@ fn handle_request(mut stream: TcpStream) -> Result<()> {
 fn main() -> Result<()> {
     env_logger::init();
     info!("Server started");
+
+    // TODO: make args parsing more flexible
+    // Right now, this expects an invoation like the following:
+    // ./servr --directory /tmp/
+    let file_directory = std::env::args().nth(2).unwrap_or("/".to_string());
+    let file_directory = PathBuf::from(file_directory);
     let listener = TcpListener::bind("127.0.0.1:4221").unwrap();
 
     let mut response_handles = Vec::new();
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                let handle = std::thread::spawn(|| handle_request(stream));
+                let file_directory = file_directory.clone();
+                let handle = std::thread::spawn(|| handle_request(file_directory, stream));
                 response_handles.push(handle);
             }
             Err(e) => {

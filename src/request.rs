@@ -34,13 +34,11 @@ pub(crate) struct Request {
 }
 
 impl Request {
-    pub(crate) fn get_header(&self, header_key: &str) -> Option<Value> {
-        for (key, value) in &self.headers {
-            if *key == *header_key {
-                return Some(value.clone());
-            }
-        }
-        None
+    pub(crate) fn get_header(&self, header_key: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k == header_key)
+            .map(|(_, v)| v.as_str())
     }
 }
 

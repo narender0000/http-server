@@ -32,7 +32,7 @@ fn handle_request(file_directory: PathBuf, mut stream: TcpStream) -> Result<()> 
             }
             Some(user_agent) => {
                 let response = format!(
-                    "HTTP1.1 200 OK\r\nContent-Type: text/plain\r\nContent=length: {}\r\n\r\n{}",
+                    "HTTP1.1 200 OK\r\nContent-Type: text/plain\r\nContent-length: {}\r\n\r\n{}",
                     user_agent.len(),
                     user_agent
                 );
@@ -45,7 +45,7 @@ fn handle_request(file_directory: PathBuf, mut stream: TcpStream) -> Result<()> 
             Some((_, path)) => {
                 debug!("echo path requested: {path}");
                 let response = format!(
-                    "HTTP1.1 200 OK\r\nContent-Type: text/plain\r\nContent=length: {}\r\n\r\n{}",
+                    "HTTP1.1 200 OK\r\nContent-Type: text/plain\r\nContent-length: {}\r\n\r\n{}",
                     path.len(),
                     path
                 );
@@ -66,7 +66,7 @@ fn handle_request(file_directory: PathBuf, mut stream: TcpStream) -> Result<()> 
                     match std::fs::read_to_string(file_directory.join(path)) {
                         Ok(body) => {
                             format!(
-                                "HTTP1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent=length: {}\r\n\r\n{}",
+                                "HTTP1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-length: {}\r\n\r\n{}",
                                 body.len(),
                                 body
                             )
@@ -81,9 +81,7 @@ fn handle_request(file_directory: PathBuf, mut stream: TcpStream) -> Result<()> 
                     //TODO: Check headers
                     //Content-Type: application/octet-stream
                     //Content-Length: 5\r\n
-                    if request.get_header("Content-Type")
-                        != Some("application/octet-stream".to_string())
-                    {
+                    if request.get_header("Content-Type") != Some("application/octet-stream") {
                         format!("HTTP/1.1 400 Bad request\r\n\r\n")
                     } else if request.get_header("Content-Length").is_none() {
                         format!("HTTP/1.1 400 Bad request\r\n\r\n")

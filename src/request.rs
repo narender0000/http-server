@@ -7,13 +7,41 @@ use std::net::TcpStream;
 type Key = String;
 type Value = String;
 
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum RequestMethod {
+    Get,
+    Post,
+}
+
+impl TryFrom<String> for RequestMethod {
+    type Error = anyhow::Error;
+    fn try_from(value: String) -> Result<Self> {
+        match value.to_lowercase().as_str() {
+            "get" => Ok(RequestMethod::Get),
+            "post" => Ok(RequestMethod::Post),
+            _ => bail!("Unsupported HTTP method: {value}"),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Request {
-    pub(crate) method: String,
+    pub(crate) method: RequestMethod,
     pub(crate) path: String,
     pub(crate) http_version: String,
     pub(crate) headers: Vec<(Key, Value)>,
-    pub(crate) body: Option<String>,
+    pub(crate) body: Option<Vec<u8>>,
+}
+
+impl Request {
+    pub(crate) fn get_header(&self, header_key: &str) -> Option<Value> {
+        for (key, value) in &self.headers {
+            if *key == *header_key {
+                return Some(value.clone());
+            }
+        }
+        None
+    }
 }
 
 impl TryFrom<TcpStream> for Request {
@@ -38,7 +66,7 @@ impl TryFrom<TcpStream> for Request {
             [method, path, http_version] => {
                 debug!("Correct format found: {}", request_line.join(" "));
                 (
-                    method.to_string(),
+                    RequestMethod::try_from(method.to_string())?,
                     path.to_string(),
                     http_version.to_string(),
                 )
@@ -48,6 +76,42 @@ impl TryFrom<TcpStream> for Request {
             }
         };
 
+        let headers = Headers::parse(&mut reader)?;
+
+        let mut expected_bytes = 0;
+        for (key, value) in &headers {
+            if key.to_string() == "Content-Length" {
+                expected_bytes = value.parse()?;
+                break;
+            }
+        }
+
+        let body = if expected_bytes == 0 {
+            debug!("No Content-Length header found, assuming no body");
+            None
+        } else {
+            debug!("Reading requets body...");
+            let mut body = vec![0; expected_bytes];
+            std::io::Read::read_exact(&mut reader, &mut body)?;
+
+            debug!("Parsed body: {body:?}");
+            Some(body)
+        };
+
+        Ok(Request {
+            method,
+            path,
+            http_version,
+            headers,
+            body,
+        })
+    }
+}
+
+struct Headers;
+
+impl Headers {
+    fn parse(mut reader: impl BufRead) -> Result<Vec<(String, String)>, anyhow::Error> {
         let mut headers = Vec::new();
         loop {
             let mut header_line = String::new();
@@ -56,19 +120,12 @@ impl TryFrom<TcpStream> for Request {
                 break;
             }
             if let Some((key, value)) = header_line.split_once(":") {
-                headers.push((key.to_string(), value.to_string()));
+                headers.push((key.trim().to_string(), value.trim().to_string()));
             } else {
                 error!("Invalid header line: {header_line}");
             }
         }
-
-        //For simplicity, we are not handling the body in this example
-        Ok(Request {
-            method,
-            path,
-            http_version,
-            headers,
-            body: None,
-        })
+        debug!("Parsed headers: {headers:?}");
+        Ok(headers)
     }
 }
